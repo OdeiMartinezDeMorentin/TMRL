@@ -34,3 +34,4 @@ Thumbs.db
 config/tracks/*/
 waypoints_plot.png
 *.log
+*.csv

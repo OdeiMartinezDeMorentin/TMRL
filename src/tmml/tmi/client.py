@@ -51,6 +51,7 @@ class TMMLClient(Client):
 
     def on_registered(self, iface: TMInterface):
         self._registered = True
+        iface.set_timeout(-1)
         if self.verbose:
             print("[TMML] Registrado en TMInterface")
 

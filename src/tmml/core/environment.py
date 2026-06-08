@@ -1,5 +1,4 @@
 import threading
-import queue
 from typing import Optional
 
 from tminterface.client import Client
@@ -16,6 +15,8 @@ from tmml.tmi.client import CarState
 
 
 class EnvClient(Client):
+    NO_ACTION = Action(accelerate=False, brake=False, steer=0)
+
     def __init__(self, verbose=False):
         super().__init__()
         self.verbose = verbose
@@ -23,9 +24,14 @@ class EnvClient(Client):
         self._registered = False
         self._step_count = 0
 
-        self.action_queue = queue.Queue(maxsize=1)
-        self.state_queue = queue.Queue(maxsize=1)
-        self.step_event = threading.Event()
+        self._action_lock = threading.Lock()
+        self._pending_action = None
+        self._last_action = self.NO_ACTION
+        self._pending_reset = False
+
+        self._new_state = threading.Event()
+        self._state_lock = threading.Lock()
+        self._latest_car_state = None
 
         self.initial_state = None
         self._iface = None
@@ -33,6 +39,7 @@ class EnvClient(Client):
     def on_registered(self, iface: TMInterface):
         self._iface = iface
         self._registered = True
+        iface.set_timeout(-1)
         if self.verbose:
             print("[EnvClient] Registrado en TMInterface")
 
@@ -46,17 +53,49 @@ class EnvClient(Client):
         if self.verbose:
             print("[EnvClient] TMInterface se cerro")
 
+    def _ensure_initial_state(self, iface: TMInterface):
+        if self.initial_state is None:
+            self.initial_state = iface.get_simulation_state()
+            if self.verbose:
+                print("[EnvClient] Estado inicial capturado")
+
     def on_simulation_begin(self, iface: TMInterface):
-        self.initial_state = iface.get_simulation_state()
+        self._ensure_initial_state(iface)
         iface.prevent_simulation_finish()
+        with self._action_lock:
+            self._pending_action = None
+            self._last_action = self.NO_ACTION
+        self._new_state.clear()
         if self.verbose:
-            print("[EnvClient] Simulacion iniciada, estado inicial guardado")
+            print("[EnvClient] Simulacion iniciada")
+
+    def _get_action(self):
+        with self._action_lock:
+            action = self._pending_action
+            if action is not None:
+                self._pending_action = None
+                self._last_action = action
+            else:
+                action = self._last_action
+        return action
 
     def on_simulation_step(self, iface: TMInterface, _time: int):
-        try:
-            action = self.action_queue.get(timeout=5.0)
-        except queue.Empty:
-            action = Action(accelerate=False, brake=False, steer=0)
+        self._ensure_initial_state(iface)
+
+        with self._action_lock:
+            reset_needed = self._pending_reset
+
+        if reset_needed and self.initial_state:
+            with self._action_lock:
+                self._pending_reset = False
+                self._pending_action = None
+                self._last_action = self.NO_ACTION
+            iface.rewind_to_state(self.initial_state)
+            if self.verbose:
+                print("[EnvClient] Rewind ejecutado")
+            return
+
+        action = self._get_action()
 
         inputs = action_to_tminterface(action)
         iface.set_input_state(
@@ -66,14 +105,18 @@ class EnvClient(Client):
         )
 
         self._update_state(iface, _time)
-        self.state_queue.put(self.state)
-        self.step_event.set()
+        with self._state_lock:
+            self._latest_car_state = self.state
+        self._new_state.set()
 
     def on_run_step(self, iface: TMInterface, _time: int):
         self.on_simulation_step(iface, _time)
 
     def on_simulation_end(self, iface: TMInterface, result: int):
         self.state.race_finished = True
+        with self._state_lock:
+            self._latest_car_state = self.state
+        self._new_state.set()
         if self.verbose:
             print(f"[EnvClient] Simulacion terminada (result={result})")
 
@@ -86,23 +129,41 @@ class EnvClient(Client):
     def on_client_exception(self, iface: TMInterface, exception: Exception):
         print(f"[EnvClient] Excepcion: {exception}")
 
-    def send_action(self, action: Action, timeout: float = 5.0) -> Optional[CarState]:
-        self.step_event.clear()
-        try:
-            self.action_queue.put(action, timeout=timeout)
-        except queue.Full:
-            return None
+    def send_action(self, action: Action, timeout: float = 10.0) -> Optional[CarState]:
+        self._new_state.clear()
+        with self._action_lock:
+            self._pending_action = action
+            self._pending_reset = False
 
-        if self.step_event.wait(timeout=timeout * 2):
-            try:
-                return self.state_queue.get_nowait()
-            except queue.Empty:
-                return None
+        if self._new_state.wait(timeout=timeout):
+            with self._state_lock:
+                return self._latest_car_state
         return None
 
-    def reset_to_initial(self):
-        if self._iface and self.initial_state:
-            self._iface.rewind_to_state(self.initial_state)
+    def reset_to_initial(self, timeout: float = 10.0) -> Optional[CarState]:
+        if not self.initial_state:
+            return None
+
+        if self.verbose:
+            print(f"[EnvClient] reset_to_initial llamado (pos actual: {[f'{v:.1f}' for v in self.state.position]})")
+
+        with self._action_lock:
+            self._pending_reset = True
+            self._pending_action = None
+            self._last_action = self.NO_ACTION
+
+        self._new_state.clear()
+
+        if self._new_state.wait(timeout=timeout):
+            with self._state_lock:
+                result = self._latest_car_state
+            if self.verbose:
+                print(f"[EnvClient] reset completado (pos: {[f'{v:.1f}' for v in result.position]}, wheels: {result.wheel_ground_contact})")
+            return result
+
+        if self.verbose:
+            print("[EnvClient] reset_to_initial TIMEOUT")
+        return None
 
     def _update_state(self, iface: TMInterface, _time: int):
         try:
@@ -175,11 +236,14 @@ class TrackmaniaEnv(gymnasium.Env):
         self.wpm.reset()
         self.reward_calc.reset()
 
+        car_state = None
         if self.client and self.client.initial_state:
-            self.client.reset_to_initial()
+            car_state = self.client.reset_to_initial()
 
-        if self.client and self.client.state:
+        if car_state is None and self.client and self.client.state:
             car_state = self.client.state
+
+        if car_state is not None:
             obs = self.state_extractor.extract(car_state, waypoint_idx=0)
         else:
             obs = np.zeros(self.observation_space.shape[0], dtype=np.float32)

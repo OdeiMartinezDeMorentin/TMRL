@@ -20,7 +20,9 @@ class StateExtractor:
 
     @property
     def observation_size(self) -> int:
-        return 3 + 1 + 3 + 3 + 4 + 1 + 1 + 1 + 1 + 1 + 3 + 1 + 1
+        base = 3 + 1 + 3 + 3 + 4 + 1 + 1 + 1 + 1 + 1
+        lookahead = len(self.wpm.look_aheads)
+        return base + lookahead + 1 + lookahead
 
     @property
     def observation_space(self) -> gymnasium.spaces.Box:

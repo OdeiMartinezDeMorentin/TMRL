@@ -9,6 +9,8 @@ class RewardConfig:
     step_penalty: float = 0.001
     completion_bonus: float = 100.0
     no_progress_timeout: int = 200
+    fallen_grace_steps: int = 20
+    fallen_debounce: int = 3
 
 
 class RewardCalculator:
@@ -17,6 +19,7 @@ class RewardCalculator:
         self.wpm = waypoint_manager
         self._last_waypoint_idx = 0
         self._no_progress_steps = 0
+        self._consecutive_fallen = 0
 
     def compute(self, car_state, prev_idx: int) -> Tuple[float, dict]:
         position = car_state.position[:3]
@@ -40,8 +43,16 @@ class RewardCalculator:
         return reward, info, current_idx
 
     def should_terminate(self, car_state, current_idx: int, total_steps: int, max_steps: int) -> Tuple[bool, Optional[str]]:
-        if not any(car_state.wheel_ground_contact):
-            return True, "fallen"
+        all_wheels_off = not any(car_state.wheel_ground_contact)
+
+        if all_wheels_off:
+            self._consecutive_fallen += 1
+        else:
+            self._consecutive_fallen = 0
+
+        if total_steps > self.config.fallen_grace_steps:
+            if self._consecutive_fallen >= self.config.fallen_debounce:
+                return True, "fallen"
 
         if car_state.race_finished:
             return True, "finished"
@@ -64,3 +75,4 @@ class RewardCalculator:
     def reset(self):
         self._last_waypoint_idx = 0
         self._no_progress_steps = 0
+        self._consecutive_fallen = 0

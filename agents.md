@@ -75,7 +75,7 @@ Python (TMML)  <--shared memory mmap-->  TMInterface  <--injection-->  Trackmani
 Accion = { accelerate: bool, brake: bool, steer: float [-1, 1] }
 ```
 
-- **DQN**: discretizar steering en 5 niveles (-1, -0.5, 0, 0.5, 1) → 2x2x5 = **20 acciones**
+- **DQN**: discretizar steering en 3 niveles (-1, 0, 1) → 2x2x3 = **12 acciones**
 - **SAC futuro**: acciones puramente continuas, steer y gas analogicos
 
 Mapeo a TMInterface:
@@ -145,7 +145,7 @@ TMML/
 2. `tmi/client.py`: Wrapper de TMInterface
 3. `core/environment.py`: Gymnasium env con step()/reset()
 4. `core/state.py`: Extraccion y normalizacion de telemetria
-5. `core/actions.py`: Espacio hibrido (20 acciones discretas)
+5. `core/actions.py`: Espacio hibrido (12 acciones discretas)
 6. `core/rewards.py`: Recompensa basica (progreso + off-track)
 7. Pista de prueba: recta elevada sin muros en el editor
 8. `collect_demo.py`: Grabar trayectoria demo

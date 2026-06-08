@@ -46,8 +46,8 @@ class WaypointManager:
 
     def get_progress(self, position: List[float]) -> Tuple[int, float]:
         new_idx = self.find_nearest(position)
-        new_idx = max(new_idx, self._current_idx)
-        self._current_idx = new_idx
+        progress = max(new_idx - self._current_idx, 0)
+        self._current_idx = max(new_idx, self._current_idx)
 
         pos = np.array(position[:3])
         if new_idx < len(self.waypoints) - 1:
@@ -56,8 +56,7 @@ class WaypointManager:
         else:
             dist_to_next = 0.0
 
-        progress = new_idx - self._current_idx
-        return new_idx, dist_to_next
+        return progress, dist_to_next
 
     def get_lookahead_angles(self, position: List[float], yaw: float, current_idx: Optional[int] = None) -> List[float]:
         idx = current_idx if current_idx is not None else self._current_idx
