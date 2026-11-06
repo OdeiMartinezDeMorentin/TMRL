@@ -162,9 +162,3 @@ Las contribuciones son bienvenidas. Para colaborar:
 2. Crea una rama para tu cambio.
 3. Añade pruebas relevantes.
 4. Abre un pull request con una descripción clara del cambio.
-
-## Contacto
-
-Repositorio: https://github.com/OdeiMartinezDeMorentin/TMRL
-
-Si quieres, puedo dejarte también una versión del README más breve, más técnica o más orientada a GitHub con badges y una estética más profesional.
